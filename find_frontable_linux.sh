@@ -3,6 +3,32 @@
 
 set -euo pipefail
 
+######################## 2 · colour logger ####################################
+if command -v tput >/dev/null; then
+  NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3); BLUE=$(tput setaf 4); GRAY=$(tput setaf 7)
+else                                   # fallback ANSI if TERM is dumb
+  NONE=$'\033[0m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; GRAY=$'\033[37m'
+fi
+
+level_val() { case $1 in debug)echo 0;; info)echo 1;; warn)echo 2;; error)echo 3;;
+               success)echo 1;; *)echo 99;; esac; }
+
+log() {                                # usage: log <level> <message>
+  local lvl=$1; shift
+  local need=$(level_val "$lvl") cur=$(level_val "$LOGLEVEL")
+  (( need<cur )) && return
+  local ts=$(date '+%F %T')
+  local colour=$NONE
+  case $lvl in debug) colour=$GRAY;; info) colour=$BLUE;;
+       warn) colour=$YELLOW;; error) colour=$RED;; success) colour=$GREEN;; esac
+  printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
+}
+
+exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
+[[ $LOGLEVEL == debug ]] && set -x
+
 ######################## 0 · option parsing ###################################
 LOGLEVEL=info
 POSITIONAL=()
@@ -101,32 +127,6 @@ else
   LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
 fi
 # PATH variable removed; install.sh handles it
-
-######################## 2 · colour logger ####################################
-if command -v tput >/dev/null; then
-  NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
-  YELLOW=$(tput setaf 3); BLUE=$(tput setaf 4); GRAY=$(tput setaf 7)
-else                                   # fallback ANSI if TERM is dumb
-  NONE=$'\033[0m'; RED=$'\033[31m'; GREEN=$'\033[32m'
-  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; GRAY=$'\033[37m'
-fi
-
-level_val() { case $1 in debug)echo 0;; info)echo 1;; warn)echo 2;; error)echo 3;;
-               success)echo 1;; *)echo 99;; esac; }
-
-log() {                                # usage: log <level> <message>
-  local lvl=$1; shift
-  local need=$(level_val "$lvl") cur=$(level_val "$LOGLEVEL")
-  (( need<cur )) && return
-  local ts=$(date '+%F %T')
-  local colour=$NONE
-  case $lvl in debug) colour=$GRAY;; info) colour=$BLUE;;
-       warn) colour=$YELLOW;; error) colour=$RED;; success) colour=$GREEN;; esac
-  printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
-}
-
-exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
-[[ $LOGLEVEL == debug ]] && set -x
 
 ######################## 3 · Ctrl-C handling ##################################
 cleanup() {
