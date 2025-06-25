@@ -9,10 +9,10 @@ LOGLEVEL=debug
 ######################## 2 · colour logger ####################################
 if command -v tput >/dev/null; then
   NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
-  YELLOW=$(tput setaf 3); BLUE=$(tput setaf 4); GRAY=$(tput setaf 7)
+  YELLOW=$(tput setaf 3); CYAN=$(tput setaf 6); GRAY=$(tput setaf 7)
 else                                   # fallback ANSI if TERM is dumb
   NONE=$'\033[0m'; RED=$'\033[31m'; GREEN=$'\033[32m'
-  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; GRAY=$'\033[37m'
+  YELLOW=$'\033[33m'; CYAN=$'\033[36m'; GRAY=$'\033[37m'
 fi
 
 level_val() { case $1 in debug)echo 0;; info)echo 1;; warn)echo 2;; error)echo 3;;
@@ -24,13 +24,11 @@ log() {                                # usage: log <level> <message>
   (( need<cur )) && return
   local ts=$(date '+%F %T')
   local colour=$NONE
-  case $lvl in debug) colour=$GRAY;; info) colour=$BLUE;;
+  case $lvl in debug) colour=$GRAY;; info) colour=$CYAN;;
        warn) colour=$YELLOW;; error) colour=$RED;; success) colour=$GREEN;; esac
   printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
 }
 
-
-[[ $LOGLEVEL == debug ]] && set -x
 
 ######################## 3 · Ctrl-C handling ##################################
 cleanup() {
@@ -113,7 +111,7 @@ OUTPUT_DIR="$(pwd)/output/$INTERNET_PROVIDER"
 mkdir -p "$OUTPUT_DIR"
 
 # Interactive ASN Selection
-log info "Fetching available ASNs from ASNs.json…"
+log info "🔍 Loading ASN database..."
 readarray -t ALL_ASNS < <(python3 ~/frontable-scanner/py/checker.py)
 
 if [[ ${#ALL_ASNS[@]} -eq 0 ]]; then
@@ -154,18 +152,19 @@ done
 ASN_INPUT=""
 while true; do
   echo ""
-  log info "🔥 Popular ASNs (commonly used for domain fronting):"
+  printf "${GREEN}🔥 Popular ASNs (commonly used for domain fronting):${NONE}\n"
   COUNTER=1
   for ASN in "${AVAILABLE_POPULAR[@]}"; do
-    log info "  $COUNTER) $ASN"
+    printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$COUNTER" "$ASN"
     COUNTER=$((COUNTER+1))
   done
   
   echo ""
-  log info "Options:"
-  log info "  • Enter 1-${#AVAILABLE_POPULAR[@]} to select a popular ASN"
-  log info "  • Type 'search' to search all ${#ALL_ASNS[@]} ASNs by keyword"
-  log info "  • Type 'all' to scan all ASNs"
+  printf "${YELLOW}Options:${NONE}\n"
+  printf "${CYAN}  • Enter ${GREEN}1-${#AVAILABLE_POPULAR[@]}${CYAN} to select a popular ASN${NONE}\n"
+  printf "${CYAN}  • Type ${GREEN}'search'${CYAN} to search all ${GREEN}${#ALL_ASNS[@]}${CYAN} ASNs by keyword${NONE}\n"
+  printf "${CYAN}  • Type ${GREEN}'all'${CYAN} to scan all ASNs${NONE}\n"
+  echo ""
   
   read -p "Your choice: " SELECTION
   
@@ -173,11 +172,11 @@ while true; do
   if [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#AVAILABLE_POPULAR[@]} )); then
     # Extract just the ASN ID (e.g., "AS16509" from "AS16509 Amazon.com, Inc.")
     ASN_INPUT=$(echo "${AVAILABLE_POPULAR[$((SELECTION-1))]}" | awk '{print $1}')
-    log info "Selected: ${AVAILABLE_POPULAR[$((SELECTION-1))]}"
+    log info "${GREEN}Selected: ${AVAILABLE_POPULAR[$((SELECTION-1))]}"
     break
   elif [[ "$SELECTION" == "all" ]]; then
     ASN_INPUT="all"
-    log info "Selected: All ASNs"
+    log info "${GREEN}Selected: All ASNs"
     break
   elif [[ "$SELECTION" == "search" ]]; then
     # Enter search mode
@@ -206,14 +205,14 @@ while true; do
       fi
       
       echo ""
-      log info "Found ${#SEARCH_RESULTS[@]} ASNs matching '$SEARCH_TERM':"
+      printf "${GREEN}Found ${#SEARCH_RESULTS[@]} ASNs matching '${YELLOW}$SEARCH_TERM${GREEN}':${NONE}\n"
       COUNTER=1
       for result in "${SEARCH_RESULTS[@]}"; do
-        log info "  $COUNTER) $result"
+        printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$COUNTER" "$result"
         COUNTER=$((COUNTER+1))
         # Limit display to first 20 results to avoid overwhelming output
         if (( COUNTER > 20 )); then
-          log info "  ... and $((${#SEARCH_RESULTS[@]} - 20)) more results"
+          printf "${GRAY}  ... and $((${#SEARCH_RESULTS[@]} - 20)) more results${NONE}\n"
           break
         fi
       done
@@ -227,7 +226,7 @@ while true; do
       elif [[ "$SEARCH_SELECTION" =~ ^[0-9]+$ ]] && (( SEARCH_SELECTION > 0 && SEARCH_SELECTION <= ${#SEARCH_RESULTS[@]} && SEARCH_SELECTION <= 20 )); then
         # Extract just the ASN ID
         ASN_INPUT=$(echo "${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}" | awk '{print $1}')
-        log info "Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
+        log info "${GREEN}Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
         break 2  # Break out of both search loop and main loop
       else
         log warn "Invalid selection. Please enter a valid number, 'refine', or 'back'."
@@ -250,6 +249,9 @@ fi
 # Now that LOGFILE is set, redirect all output to log file
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# Activate debug mode after logging setup is complete
+[[ $LOGLEVEL == debug ]] && set -x
+
 ######################## 4 · Homebrew helper ##################################
 # Dependency checks moved to install.sh
 # [[ "$(uname -s)" == Darwin ]] || { echo "macOS only"; exit 1; }
@@ -261,25 +263,25 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 ######################## 6 · fetch routed prefixes ############################
 if [[ "$ASN_INPUT" == "all" ]]; then
-  log info "📡  Fetching prefixes for all ASNs from ASNs.json …"
+  log info "${CYAN}📡 Fetching prefixes for ${GREEN}all ASNs${CYAN}..."
   python3 ~/frontable-scanner/py/checker.py --cidrs > "$CIDRS"
 else
-  log info "📡  Fetching prefixes for $ASN_INPUT from ASNs.json …"
+  log info "${CYAN}📡 Fetching prefixes for ${GREEN}$ASN_INPUT${CYAN}..."
   python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
 fi
 
-log info "    → $(wc -l <"$CIDRS") CIDRs"
+log info "${GREEN}Found ${YELLOW}$(wc -l <"$CIDRS")${GREEN} CIDR ranges"
 
 ######################## 7 · masscan port 443 #################################
-log info "🚀  masscan @${RATE}pps (sudo prompt follows)"
+log info "${CYAN}🚀 Scanning ports ${GRAY}(rate: ${YELLOW}${RATE}pps${GRAY})${CYAN}..."
 sudo -p "masscan needs root → " \
      masscan -iL "$CIDRS" -p443 --rate "$RATE" --banners -oL "$SCAN"
 
 grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' "$SCAN" | sort -u > "$SCAN.ips"
-log info "    → $(wc -l <"$SCAN.ips") hosts responded on 443"
+log info "${GREEN}Found ${YELLOW}$(wc -l <"$SCAN.ips")${GREEN} hosts with port 443 open"
 
 ######################## 8 · parallel TLS probe ###############################
-log info "🔍  TLS handshakes in parallel ($PARALLEL_JOBS parallel jobs)…"
+log info "${CYAN}🔍 Testing IPs for domain fronting ${GRAY}(${YELLOW}${PARALLEL_JOBS}${GRAY} parallel jobs)${CYAN}..."
 : > "$OUTFILE"
 
 probe_one() {                           # $1 = IP address
@@ -288,24 +290,25 @@ probe_one() {                           # $1 = IP address
          < /dev/null 2>/dev/null | grep -q "Server certificate"; then
     if gtimeout 4 curl --resolve "$DECOY_HOST:443:$ip" "$DECOY_FULL_URL" 2>/dev/null | grep -q "Bad Request"; then
       echo "$ip" >> "$OUTFILE"
-      log success "✔︎ $ip"
+      log info "${GREEN}✔︎ $ip"
     else
-      log debug   "✘ $ip (TLS OK, but curl test failed)"
+      log info "${RED}✘ $ip ${GRAY}(TLS OK, but curl test failed)"
     fi
   else
-    log debug   "✘ $ip (TLS handshake failed)"
+    log info "${RED}✘ $ip ${GRAY}(TLS handshake failed)"
   fi
 }
 
 export -f probe_one log level_val                      # functions only
-export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH OUTFILE NONE RED GREEN YELLOW BLUE GRAY  # Export new variables
+export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH OUTFILE NONE RED GREEN YELLOW CYAN GRAY  # Export new variables
 
 # Use PARALLEL_JOBS instead of CORES for better performance on network I/O
 xargs -n1 -P "$PARALLEL_JOBS" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
 
 GOOD=$(wc -l <"$OUTFILE")
-log success "✅  $GOOD frontable IPs saved → $OUTFILE"
-log info    "📜  Full plain log: $LOGFILE"
+log info "${GREEN}✅ Scan complete! Found ${YELLOW}$GOOD${GREEN} working IPs"
+log info "${CYAN}📁 Results saved: ${GREEN}$OUTFILE"
+log debug "📜 Full log: $LOGFILE"
 rm -rf "$WORKDIR"
 exit 0
 
