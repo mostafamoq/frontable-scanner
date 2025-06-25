@@ -26,8 +26,19 @@ log() {                                # usage: log <level> <message>
   printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
 }
 
-exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
+
 [[ $LOGLEVEL == debug ]] && set -x
+
+######################## 3 · Ctrl-C handling ##################################
+exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
+cleanup() {
+  log info "🛑  Interrupt — stopping masscan…"
+  sudo pkill -2 -f /masscan 2>/dev/null || true
+  # Only remove WORKDIR, not the entire output directory
+  rm -rf "$WORKDIR"
+  exit 1
+}
+trap cleanup INT TERM
 
 ######################## 0 · option parsing ###################################
 LOGLEVEL=info
@@ -49,6 +60,8 @@ CORES=$(nproc 2>/dev/null || echo 2) # Use nproc for Linux
 WORKDIR="$(mktemp -d)"
 CIDRS="$WORKDIR/scan.cidrs" # Generic name since it might be multiple ASNs
 SCAN="$WORKDIR/scan.scan"
+OUTFILE="$WORKDIR/frontable.txt"  # Initialize with temporary paths
+LOGFILE="$WORKDIR/frontable.log" # Initialize with temporary paths
 
 # Interactive input for DECOY_FULL_URL
 DECOY_FULL_URL=""
@@ -127,16 +140,6 @@ else
   LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
 fi
 # PATH variable removed; install.sh handles it
-
-######################## 3 · Ctrl-C handling ##################################
-cleanup() {
-  log info "🛑  Interrupt — stopping masscan…"
-  sudo pkill -2 -f /masscan 2>/dev/null || true
-  # Only remove WORKDIR, not the entire output directory
-  rm -rf "$WORKDIR"
-  exit 1
-}
-trap cleanup INT TERM
 
 ######################## 4 · Dependency helper (Linux) ######################
 # Dependency checks moved to install.sh
