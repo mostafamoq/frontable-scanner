@@ -6,7 +6,7 @@ set -euo pipefail
 # --- Configuration Variables ---
 INSTALL_DIR="$HOME/frontable-scanner"
 # !!! IMPORTANT: Replace with your actual GitHub raw content URL !!!
-GITHUB_RAW_BASE_URL="YOUR_GITHUB_REPO_RAW_URL"
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/mostafamoq/frontable-scanner/main"
 
 # --- Logging Function ---
 log() {
