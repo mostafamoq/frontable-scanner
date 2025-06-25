@@ -52,7 +52,7 @@ frontable
 
 The tool will interactively ask you:
 
-1. **🎭 Decoy URL**: Your target website (e.g., `https://example.com/path`)
+1. **🎭 Decoy URL**: Your target ws xray vless protocol address (e.g., `https://example.com/ws-set-path`)
 2. **🏢 Provider Name**: For organizing results (e.g., "Cloudflare")  
 3. **🌐 ASN Selection**: Choose from popular providers or search all networks
 
