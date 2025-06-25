@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import sys
+import os
 
 def get_cidrs(asns_data, target_asn=None):
     cidrs = []
@@ -21,7 +22,11 @@ def get_cidrs(asns_data, target_asn=None):
     return cidrs
 
 if __name__ == '__main__':
-    with open('py/ASNs.json', 'r') as file:
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    json_path = os.path.join(script_dir, 'ASNs.json')
+    
+    with open(json_path, 'r') as file:
         asns = json.load(file)
 
     target_asn = None

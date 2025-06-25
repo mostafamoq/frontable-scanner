@@ -3,6 +3,9 @@
 
 set -euo pipefail
 
+# Initialize LOGLEVEL with a default value
+LOGLEVEL=info
+
 ######################## 2 · colour logger ####################################
 if command -v tput >/dev/null; then
   NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
@@ -30,7 +33,6 @@ log() {                                # usage: log <level> <message>
 [[ $LOGLEVEL == debug ]] && set -x
 
 ######################## 3 · Ctrl-C handling ##################################
-exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
 cleanup() {
   log info "🛑  Interrupt — stopping masscan…"
   sudo pkill -2 -f /masscan 2>/dev/null || true
@@ -41,7 +43,6 @@ cleanup() {
 trap cleanup INT TERM
 
 ######################## 0 · option parsing ###################################
-LOGLEVEL=info
 POSITIONAL=()
 while (( $# )); do
   case "$1" in
@@ -103,10 +104,10 @@ mkdir -p "$OUTPUT_DIR"
 
 # Interactive ASN Selection
 log info "Fetching available ASNs from ASNs.json…"
-readarray -t ALL_ASNS < <(python3 py/checker.py)
+readarray -t ALL_ASNS < <(python3 ~/frontable-scanner/py/checker.py)
 
 if [[ ${#ALL_ASNS[@]} -eq 0 ]]; then
-  log error "No ASNs found in py/ASNs.json. Please ensure the file exists and is correctly formatted."
+  log error "No ASNs found in ~/frontable-scanner/py/ASNs.json. Please ensure the file exists and is correctly formatted."
   exit 1
 fi
 
@@ -140,6 +141,9 @@ else
   LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
 fi
 # PATH variable removed; install.sh handles it
+
+# Now that LOGFILE is set, redirect all output to log file
+exec > >(tee -a "$LOGFILE") 2>&1
 
 ######################## 4 · Dependency helper (Linux) ######################
 # Dependency checks moved to install.sh
@@ -176,10 +180,10 @@ fi
 ######################## 6 · fetch routed prefixes ############################
 if [[ "$ASN_INPUT" == "all" ]]; then
   log info "📡  Fetching prefixes for all ASNs from ASNs.json …"
-  ./py/checker.py > "$CIDRS"
+  python3 ~/frontable-scanner/py/checker.py > "$CIDRS"
 else
   log info "📡  Fetching prefixes for $ASN_INPUT from ASNs.json …"
-  ./py/checker.py "$ASN_INPUT" > "$CIDRS"
+  python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
 fi
 
 log info "    → $(wc -l <"$CIDRS") CIDRs"
