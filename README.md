@@ -70,17 +70,27 @@ Follow these simple steps to get your Domain Fronting IP Scanner ready:
     
     *Example: If your GitHub username is `myuser` and your repository is `my-fronting-tool`, it would be `https://raw.githubusercontent.com/myuser/my-fronting-tool/main`*
 
-5.  **Run the Main Installer!**:
-    ```bash
-    ./install.sh
-    ```
-    This script will do all the heavy lifting:
-    *   It figures out if you're on a Mac or Linux.
-    *   It checks for and installs all the extra programs you need.
-    *   It creates a special folder (`~/frontable-scanner`) on your computer for the tool.
-    *   It downloads all the necessary files (like the main scanner scripts and your `ASNs.json`).
-    *   It makes sure all the scripts can be run.
-    *   **Important**: It will ask you if you want to set up a handy command called `frontable`. We highly recommend saying **yes** (`y`) to this! It makes running the scanner much easier later.
+5.  **Run the Main Installer!** (Choose one option):
+
+    *   **Option A: Simple Download & Run (Recommended for first-time setup)**
+        If you've already cloned the repository and are in its directory, simply run:
+        ```bash
+        ./install.sh
+        ```
+        This script will do all the heavy lifting:
+        *   It figures out if you're on a Mac or Linux.
+        *   It checks for and installs all the extra programs you need.
+        *   It creates a special folder (`~/frontable-scanner`) on your computer for the tool.
+        *   It downloads all the necessary files (like the main scanner scripts and your `ASNs.json`).
+        *   It makes sure all the scripts can be run.
+        *   **Important**: It will ask you if you want to set up a handy command called `frontable`. We highly recommend saying **yes** (`y`) to this! It makes running the scanner much easier later.
+
+    *   **Option B: One-Line Install (For quick setup from anywhere)**
+        You can also download and run the installer directly from GitHub using a single command. Open your Terminal and type:
+        ```bash
+        bash <(curl -Ls https://raw.githubusercontent.com/mostafamoq/frontable-scanner/main/install.sh)
+        ```
+        This command will fetch the `install.sh` script and execute it immediately. It performs the same steps as Option A.
 
     *Note: If `masscan` (the fast scanner) gives you trouble during installation, you might need to install it manually. It sometimes needs special steps depending on your Linux version.* 
 
