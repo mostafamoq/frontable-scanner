@@ -126,7 +126,8 @@ while true; do
     ASN_INPUT="all"
     break
   elif [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#ALL_ASNS[@]} )); then
-    ASN_INPUT="${ALL_ASNS[$((SELECTION-1))]}"
+    # Extract just the ASN ID (e.g., "AS16509" from "AS16509 Amazon.com, Inc.")
+    ASN_INPUT=$(echo "${ALL_ASNS[$((SELECTION-1))]}" | awk '{print $1}')
     break
   else
     log warn "Invalid selection. Please enter a valid number or 'all'."
@@ -180,7 +181,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 ######################## 6 · fetch routed prefixes ############################
 if [[ "$ASN_INPUT" == "all" ]]; then
   log info "📡  Fetching prefixes for all ASNs from ASNs.json …"
-  python3 ~/frontable-scanner/py/checker.py > "$CIDRS"
+  python3 ~/frontable-scanner/py/checker.py --cidrs > "$CIDRS"
 else
   log info "📡  Fetching prefixes for $ASN_INPUT from ASNs.json …"
   python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
