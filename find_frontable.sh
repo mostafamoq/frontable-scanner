@@ -3,8 +3,46 @@
 
 set -euo pipefail
 
+# Initialize LOGLEVEL with a default value
+LOGLEVEL=debug
+
+######################## 2 · colour logger ####################################
+if command -v tput >/dev/null; then
+  NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3); BLUE=$(tput setaf 4); GRAY=$(tput setaf 7)
+else                                   # fallback ANSI if TERM is dumb
+  NONE=$'\033[0m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; GRAY=$'\033[37m'
+fi
+
+level_val() { case $1 in debug)echo 0;; info)echo 1;; warn)echo 2;; error)echo 3;;
+               success)echo 1;; *)echo 99;; esac; }
+
+log() {                                # usage: log <level> <message>
+  local lvl=$1; shift
+  local need=$(level_val "$lvl") cur=$(level_val "$LOGLEVEL")
+  (( need<cur )) && return
+  local ts=$(date '+%F %T')
+  local colour=$NONE
+  case $lvl in debug) colour=$GRAY;; info) colour=$BLUE;;
+       warn) colour=$YELLOW;; error) colour=$RED;; success) colour=$GREEN;; esac
+  printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
+}
+
+
+[[ $LOGLEVEL == debug ]] && set -x
+
+######################## 3 · Ctrl-C handling ##################################
+cleanup() {
+  log info "🛑  Interrupt — stopping masscan…"
+  sudo pkill -2 -f /masscan 2>/dev/null || true
+  # Only remove WORKDIR, not the entire output directory
+  rm -rf "$WORKDIR"
+  exit 1
+}
+trap cleanup INT TERM
+
 ######################## 0 · option parsing ###################################
-LOGLEVEL=info
 POSITIONAL=()
 while (( $# )); do
   case "$1" in
@@ -20,9 +58,21 @@ set -- "${POSITIONAL[@]}"
 ######################## 1 · globals ##########################################
 RATE="${RATE:-50000}"
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 2)
+# For network I/O operations, we can use more parallel processes than CPU cores
+# This is especially helpful on low-core machines
+if (( CORES <= 2 )); then
+  PARALLEL_JOBS=20  # Use 20 parallel jobs on low-core machines
+elif (( CORES <= 4 )); then
+  PARALLEL_JOBS=30  # Use 30 parallel jobs on quad-core machines
+else
+  PARALLEL_JOBS=$((CORES * 8))  # Use 8x CPU cores on higher-end machines
+fi
+
 WORKDIR="$(mktemp -d)"
 CIDRS="$WORKDIR/scan.cidrs" # Generic name since it might be multiple ASNs
 SCAN="$WORKDIR/scan.scan"
+OUTFILE="$WORKDIR/frontable.txt"  # Initialize with temporary paths
+LOGFILE="$WORKDIR/frontable.log" # Initialize with temporary paths
 
 # Interactive input for DECOY_FULL_URL
 DECOY_FULL_URL=""
@@ -62,39 +112,129 @@ done
 OUTPUT_DIR="$(pwd)/output/$INTERNET_PROVIDER"
 mkdir -p "$OUTPUT_DIR"
 
-######################## 2 · globals ##########################################
-WORKDIR="$(mktemp -d)"
-CIDRS="$WORKDIR/scan.cidrs" # Generic name since it might be multiple ASNs
-SCAN="$WORKDIR/scan.scan"
-
 # Interactive ASN Selection
 log info "Fetching available ASNs from ASNs.json…"
-readarray -t ALL_ASNS < <(python3 py/checker.py)
+readarray -t ALL_ASNS < <(python3 ~/frontable-scanner/py/checker.py)
 
 if [[ ${#ALL_ASNS[@]} -eq 0 ]]; then
-  log error "No ASNs found in py/ASNs.json. Please ensure the file exists and is correctly formatted."
+  log error "No ASNs found in ~/frontable-scanner/py/ASNs.json. Please ensure the file exists and is correctly formatted."
   exit 1
 fi
 
-log info "Available ASNs:"
-COUNTER=1
-for ASN in "${ALL_ASNS[@]}"; do
-  log info "  $COUNTER) $ASN"
-  COUNTER=$((COUNTER+1))
+# Define popular ASNs (most commonly used for domain fronting)
+POPULAR_ASNS=(
+  "AS13335 Cloudflare, Inc."
+  "AS16509 Amazon.com, Inc."
+  "AS15169 Google LLC"
+  "AS8075 Microsoft Corporation"
+  "AS32934 Facebook, Inc."
+  "AS20940 Akamai International B.V."
+  "AS2906 Netflix, Inc."
+  "AS16625 Akamai Technologies, Inc."
+  "AS54113 Fastly"
+  "AS19527 Google LLC"
+  "AS14618 Amazon.com, Inc."
+  "AS396982 Google LLC"
+  "AS8987 Amazon Data Services UK"
+  "AS16591 Google Fiber Inc."
+  "AS36040 YouTube LLC"
+)
+
+# Filter popular ASNs that actually exist in our data
+AVAILABLE_POPULAR=()
+for popular in "${POPULAR_ASNS[@]}"; do
+  for asn in "${ALL_ASNS[@]}"; do
+    if [[ "$asn" == "$popular" ]]; then
+      AVAILABLE_POPULAR+=("$asn")
+      break
+    fi
+  done
 done
-log info "  Type 'all' to scan all ASNs."
 
 ASN_INPUT=""
 while true; do
-  read -p "Enter a number to select an ASN, or 'all': " SELECTION
-  if [[ "$SELECTION" == "all" ]]; then
+  echo ""
+  log info "🔥 Popular ASNs (commonly used for domain fronting):"
+  COUNTER=1
+  for ASN in "${AVAILABLE_POPULAR[@]}"; do
+    log info "  $COUNTER) $ASN"
+    COUNTER=$((COUNTER+1))
+  done
+  
+  echo ""
+  log info "Options:"
+  log info "  • Enter 1-${#AVAILABLE_POPULAR[@]} to select a popular ASN"
+  log info "  • Type 'search' to search all ${#ALL_ASNS[@]} ASNs by keyword"
+  log info "  • Type 'all' to scan all ASNs"
+  
+  read -p "Your choice: " SELECTION
+  
+  # Check if it's a number for popular ASNs
+  if [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#AVAILABLE_POPULAR[@]} )); then
+    # Extract just the ASN ID (e.g., "AS16509" from "AS16509 Amazon.com, Inc.")
+    ASN_INPUT=$(echo "${AVAILABLE_POPULAR[$((SELECTION-1))]}" | awk '{print $1}')
+    log info "Selected: ${AVAILABLE_POPULAR[$((SELECTION-1))]}"
+    break
+  elif [[ "$SELECTION" == "all" ]]; then
     ASN_INPUT="all"
+    log info "Selected: All ASNs"
     break
-  elif [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#ALL_ASNS[@]} )); then
-    ASN_INPUT="${ALL_ASNS[$((SELECTION-1))]}"
-    break
+  elif [[ "$SELECTION" == "search" ]]; then
+    # Enter search mode
+    while true; do
+      echo ""
+      read -p "🔍 Enter keywords to search ASNs (or 'back' to return): " SEARCH_TERM
+      
+      if [[ "$SEARCH_TERM" == "back" ]]; then
+        break  # Go back to main menu
+      elif [[ -z "$SEARCH_TERM" ]]; then
+        log warn "Please enter a search term."
+        continue
+      fi
+      
+      # Search for matching ASNs (case-insensitive)
+      SEARCH_RESULTS=()
+      for asn in "${ALL_ASNS[@]}"; do
+        if [[ "${asn,,}" == *"${SEARCH_TERM,,}"* ]]; then
+          SEARCH_RESULTS+=("$asn")
+        fi
+      done
+      
+      if [[ ${#SEARCH_RESULTS[@]} -eq 0 ]]; then
+        log warn "No ASNs found matching '$SEARCH_TERM'. Try different keywords."
+        continue
+      fi
+      
+      echo ""
+      log info "Found ${#SEARCH_RESULTS[@]} ASNs matching '$SEARCH_TERM':"
+      COUNTER=1
+      for result in "${SEARCH_RESULTS[@]}"; do
+        log info "  $COUNTER) $result"
+        COUNTER=$((COUNTER+1))
+        # Limit display to first 20 results to avoid overwhelming output
+        if (( COUNTER > 20 )); then
+          log info "  ... and $((${#SEARCH_RESULTS[@]} - 20)) more results"
+          break
+        fi
+      done
+      
+      read -p "Enter number to select, 'refine' to search again, or 'back': " SEARCH_SELECTION
+      
+      if [[ "$SEARCH_SELECTION" == "back" ]]; then
+        break  # Go back to main menu
+      elif [[ "$SEARCH_SELECTION" == "refine" ]]; then
+        continue  # Search again
+      elif [[ "$SEARCH_SELECTION" =~ ^[0-9]+$ ]] && (( SEARCH_SELECTION > 0 && SEARCH_SELECTION <= ${#SEARCH_RESULTS[@]} && SEARCH_SELECTION <= 20 )); then
+        # Extract just the ASN ID
+        ASN_INPUT=$(echo "${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}" | awk '{print $1}')
+        log info "Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
+        break 2  # Break out of both search loop and main loop
+      else
+        log warn "Invalid selection. Please enter a valid number, 'refine', or 'back'."
+      fi
+    done
   else
-    log warn "Invalid selection. Please enter a valid number or 'all'."
+    log warn "Invalid selection. Please try again."
   fi
 done
 
@@ -105,42 +245,10 @@ else
   OUTFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).txt"
   LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
 fi
+# PATH variable removed; install.sh handles it
 
-######################## 2 · colour logger ####################################
-if command -v tput >/dev/null; then
-  NONE=$(tput sgr0);   RED=$(tput setaf 1);  GREEN=$(tput setaf 2)
-  YELLOW=$(tput setaf 3); BLUE=$(tput setaf 4); GRAY=$(tput setaf 7)
-else                                   # fallback ANSI if TERM is dumb
-  NONE=$'\033[0m'; RED=$'\033[31m'; GREEN=$'\033[32m'
-  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; GRAY=$'\033[37m'
-fi
-
-level_val() { case $1 in debug)echo 0;; info)echo 1;; warn)echo 2;; error)echo 3;;
-               success)echo 1;; *)echo 99;; esac; }
-
-log() {                                # usage: log <level> <message>
-  local lvl=$1; shift
-  local need=$(level_val "$lvl") cur=$(level_val "$LOGLEVEL")
-  (( need<cur )) && return
-  local ts=$(date '+%F %T')
-  local colour=$NONE
-  case $lvl in debug) colour=$GRAY;; info) colour=$BLUE;;
-       warn) colour=$YELLOW;; error) colour=$RED;; success) colour=$GREEN;; esac
-  printf '%s%s %-7s%s : %s\n' "$colour" "$ts" "${lvl^^}" "$NONE" "$*"
-}
-
-exec > >(tee -a "$LOGFILE") 2>&1       # everything shown and logged
-[[ $LOGLEVEL == debug ]] && set -x
-
-######################## 3 · Ctrl-C handling ##################################
-cleanup() {
-  log info "🛑  Interrupt — stopping masscan…"
-  sudo pkill -2 -f /masscan 2>/dev/null || true
-  # Only remove WORKDIR, not the entire output directory
-  rm -rf "$WORKDIR"
-  exit 1
-}
-trap cleanup INT TERM
+# Now that LOGFILE is set, redirect all output to log file
+exec > >(tee -a "$LOGFILE") 2>&1
 
 ######################## 4 · Homebrew helper ##################################
 # Dependency checks moved to install.sh
@@ -154,10 +262,10 @@ trap cleanup INT TERM
 ######################## 6 · fetch routed prefixes ############################
 if [[ "$ASN_INPUT" == "all" ]]; then
   log info "📡  Fetching prefixes for all ASNs from ASNs.json …"
-  ./py/checker.py > "$CIDRS"
+  python3 ~/frontable-scanner/py/checker.py --cidrs > "$CIDRS"
 else
   log info "📡  Fetching prefixes for $ASN_INPUT from ASNs.json …"
-  ./py/checker.py "$ASN_INPUT" > "$CIDRS"
+  python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
 fi
 
 log info "    → $(wc -l <"$CIDRS") CIDRs"
@@ -171,7 +279,7 @@ grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' "$SCAN" | sort -u > "$SCAN.ips"
 log info "    → $(wc -l <"$SCAN.ips") hosts responded on 443"
 
 ######################## 8 · parallel TLS probe ###############################
-log info "🔍  TLS handshakes in parallel ($CORES cores)…"
+log info "🔍  TLS handshakes in parallel ($PARALLEL_JOBS parallel jobs)…"
 : > "$OUTFILE"
 
 probe_one() {                           # $1 = IP address
@@ -192,8 +300,8 @@ probe_one() {                           # $1 = IP address
 export -f probe_one log level_val                      # functions only
 export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH OUTFILE NONE RED GREEN YELLOW BLUE GRAY  # Export new variables
 
-# BSD xargs has -P but not -a → feed file via stdin
-xargs -n1 -P "$CORES" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
+# Use PARALLEL_JOBS instead of CORES for better performance on network I/O
+xargs -n1 -P "$PARALLEL_JOBS" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
 
 GOOD=$(wc -l <"$OUTFILE")
 log success "✅  $GOOD frontable IPs saved → $OUTFILE"

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Initialize LOGLEVEL with a default value
-LOGLEVEL=info
+LOGLEVEL=debug
 
 ######################## 2 · colour logger ####################################
 if command -v tput >/dev/null; then
@@ -58,6 +58,16 @@ set -- "${POSITIONAL[@]}"
 ######################## 1 · globals ##########################################
 RATE="${RATE:-50000}"
 CORES=$(nproc 2>/dev/null || echo 2) # Use nproc for Linux
+# For network I/O operations, we can use more parallel processes than CPU cores
+# This is especially helpful on low-core VPS machines
+if (( CORES <= 2 )); then
+  PARALLEL_JOBS=20  # Use 20 parallel jobs on low-core machines
+elif (( CORES <= 4 )); then
+  PARALLEL_JOBS=30  # Use 30 parallel jobs on quad-core machines
+else
+  PARALLEL_JOBS=$((CORES * 8))  # Use 8x CPU cores on higher-end machines
+fi
+
 WORKDIR="$(mktemp -d)"
 CIDRS="$WORKDIR/scan.cidrs" # Generic name since it might be multiple ASNs
 SCAN="$WORKDIR/scan.scan"
@@ -111,26 +121,120 @@ if [[ ${#ALL_ASNS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-log info "Available ASNs:"
-COUNTER=1
-for ASN in "${ALL_ASNS[@]}"; do
-  log info "  $COUNTER) $ASN"
-  COUNTER=$((COUNTER+1))
+# Define popular ASNs (most commonly used for domain fronting)
+POPULAR_ASNS=(
+  "AS13335 Cloudflare, Inc."
+  "AS16509 Amazon.com, Inc."
+  "AS15169 Google LLC"
+  "AS8075 Microsoft Corporation"
+  "AS32934 Facebook, Inc."
+  "AS20940 Akamai International B.V."
+  "AS2906 Netflix, Inc."
+  "AS16625 Akamai Technologies, Inc."
+  "AS54113 Fastly"
+  "AS19527 Google LLC"
+  "AS14618 Amazon.com, Inc."
+  "AS396982 Google LLC"
+  "AS8987 Amazon Data Services UK"
+  "AS16591 Google Fiber Inc."
+  "AS36040 YouTube LLC"
+)
+
+# Filter popular ASNs that actually exist in our data
+AVAILABLE_POPULAR=()
+for popular in "${POPULAR_ASNS[@]}"; do
+  for asn in "${ALL_ASNS[@]}"; do
+    if [[ "$asn" == "$popular" ]]; then
+      AVAILABLE_POPULAR+=("$asn")
+      break
+    fi
+  done
 done
-log info "  Type 'all' to scan all ASNs."
 
 ASN_INPUT=""
 while true; do
-  read -p "Enter a number to select an ASN, or 'all': " SELECTION
-  if [[ "$SELECTION" == "all" ]]; then
-    ASN_INPUT="all"
-    break
-  elif [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#ALL_ASNS[@]} )); then
+  echo ""
+  log info "🔥 Popular ASNs (commonly used for domain fronting):"
+  COUNTER=1
+  for ASN in "${AVAILABLE_POPULAR[@]}"; do
+    log info "  $COUNTER) $ASN"
+    COUNTER=$((COUNTER+1))
+  done
+  
+  echo ""
+  log info "Options:"
+  log info "  • Enter 1-${#AVAILABLE_POPULAR[@]} to select a popular ASN"
+  log info "  • Type 'search' to search all ${#ALL_ASNS[@]} ASNs by keyword"
+  log info "  • Type 'all' to scan all ASNs"
+  
+  read -p "Your choice: " SELECTION
+  
+  # Check if it's a number for popular ASNs
+  if [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#AVAILABLE_POPULAR[@]} )); then
     # Extract just the ASN ID (e.g., "AS16509" from "AS16509 Amazon.com, Inc.")
-    ASN_INPUT=$(echo "${ALL_ASNS[$((SELECTION-1))]}" | awk '{print $1}')
+    ASN_INPUT=$(echo "${AVAILABLE_POPULAR[$((SELECTION-1))]}" | awk '{print $1}')
+    log info "Selected: ${AVAILABLE_POPULAR[$((SELECTION-1))]}"
     break
+  elif [[ "$SELECTION" == "all" ]]; then
+    ASN_INPUT="all"
+    log info "Selected: All ASNs"
+    break
+  elif [[ "$SELECTION" == "search" ]]; then
+    # Enter search mode
+    while true; do
+      echo ""
+      read -p "🔍 Enter keywords to search ASNs (or 'back' to return): " SEARCH_TERM
+      
+      if [[ "$SEARCH_TERM" == "back" ]]; then
+        break  # Go back to main menu
+      elif [[ -z "$SEARCH_TERM" ]]; then
+        log warn "Please enter a search term."
+        continue
+      fi
+      
+      # Search for matching ASNs (case-insensitive)
+      SEARCH_RESULTS=()
+      for asn in "${ALL_ASNS[@]}"; do
+        if [[ "${asn,,}" == *"${SEARCH_TERM,,}"* ]]; then
+          SEARCH_RESULTS+=("$asn")
+        fi
+      done
+      
+      if [[ ${#SEARCH_RESULTS[@]} -eq 0 ]]; then
+        log warn "No ASNs found matching '$SEARCH_TERM'. Try different keywords."
+        continue
+      fi
+      
+      echo ""
+      log info "Found ${#SEARCH_RESULTS[@]} ASNs matching '$SEARCH_TERM':"
+      COUNTER=1
+      for result in "${SEARCH_RESULTS[@]}"; do
+        log info "  $COUNTER) $result"
+        COUNTER=$((COUNTER+1))
+        # Limit display to first 20 results to avoid overwhelming output
+        if (( COUNTER > 20 )); then
+          log info "  ... and $((${#SEARCH_RESULTS[@]} - 20)) more results"
+          break
+        fi
+      done
+      
+      read -p "Enter number to select, 'refine' to search again, or 'back': " SEARCH_SELECTION
+      
+      if [[ "$SEARCH_SELECTION" == "back" ]]; then
+        break  # Go back to main menu
+      elif [[ "$SEARCH_SELECTION" == "refine" ]]; then
+        continue  # Search again
+      elif [[ "$SEARCH_SELECTION" =~ ^[0-9]+$ ]] && (( SEARCH_SELECTION > 0 && SEARCH_SELECTION <= ${#SEARCH_RESULTS[@]} && SEARCH_SELECTION <= 20 )); then
+        # Extract just the ASN ID
+        ASN_INPUT=$(echo "${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}" | awk '{print $1}')
+        log info "Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
+        break 2  # Break out of both search loop and main loop
+      else
+        log warn "Invalid selection. Please enter a valid number, 'refine', or 'back'."
+      fi
+    done
   else
-    log warn "Invalid selection. Please enter a valid number or 'all'."
+    log warn "Invalid selection. Please try again."
   fi
 done
 
@@ -198,7 +302,7 @@ grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' "$SCAN" | sort -u > "$SCAN.ips"
 log info "    → $(wc -l <"$SCAN.ips") hosts responded on 443"
 
 ######################## 8 · parallel TLS probe ###############################
-log info "🔍  TLS handshakes in parallel ($CORES cores)…"
+log info "🔍  TLS handshakes in parallel ($PARALLEL_JOBS parallel jobs)…"
 : > "$OUTFILE"
 
 probe_one() {                           # $1 = IP address
@@ -219,8 +323,8 @@ probe_one() {                           # $1 = IP address
 export -f probe_one log level_val                      # functions only
 export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH OUTFILE NONE RED GREEN YELLOW BLUE GRAY  # Export new variables
 
-# Linux xargs should handle -P fine
-xargs -n1 -P "$CORES" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
+# Use PARALLEL_JOBS instead of CORES for better performance on network I/O
+xargs -n1 -P "$PARALLEL_JOBS" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
 
 GOOD=$(wc -l <"$OUTFILE")
 log success "✅  $GOOD frontable IPs saved → $OUTFILE"
