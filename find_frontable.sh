@@ -196,33 +196,80 @@ for popular in "${POPULAR_ASNS[@]}"; do
 done
 
 ASN_INPUT=""
+# Main ASN list pagination
+page_size=20
+current_page=1
+total_pages=$(( (${#ALL_ASNS[@]} + page_size - 1) / page_size ))
+
 while true; do
   echo ""
-  printf "${GREEN}🔥 Popular ASNs (commonly used for domain fronting):${NONE}\n"
-  COUNTER=1
-  for ASN in "${AVAILABLE_POPULAR[@]}"; do
-    printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$COUNTER" "$ASN"
-    COUNTER=$((COUNTER+1))
+  printf "${GREEN}🌐 ASN List (Page ${YELLOW}$current_page${GREEN}/${YELLOW}$total_pages${GREEN}):${NONE}\n"
+  
+  # Calculate start and end indices for current page
+  start_idx=$(( (current_page - 1) * page_size ))
+  end_idx=$(( start_idx + page_size - 1 ))
+  if (( end_idx >= ${#ALL_ASNS[@]} )); then
+    end_idx=$(( ${#ALL_ASNS[@]} - 1 ))
+  fi
+  
+  # Display current page results
+  for i in $(seq $start_idx $end_idx); do
+    display_num=$(( i + 1 ))
+    asn="${ALL_ASNS[$i]}"
+    
+    # Highlight popular ASNs
+    is_popular=false
+    for popular in "${AVAILABLE_POPULAR[@]}"; do
+      if [[ "$asn" == "$popular" ]]; then
+        is_popular=true
+        break
+      fi
+    done
+    
+    if [[ "$is_popular" == true ]]; then
+      printf "${CYAN}  %d) ${GREEN}%s ${YELLOW}🔥${NONE}\n" "$display_num" "$asn"
+    else
+      printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$display_num" "$asn"
+    fi
   done
   
   echo ""
-  printf "${YELLOW}Options:${NONE}\n"
-  printf "${CYAN}  • Enter ${GREEN}1-${#AVAILABLE_POPULAR[@]}${CYAN} to select a popular ASN${NONE}\n"
-  printf "${CYAN}  • Type ${GREEN}'search'${CYAN} to search all ${GREEN}${#ALL_ASNS[@]}${CYAN} ASNs by keyword${NONE}\n"
-  printf "${CYAN}  • Type ${GREEN}'all'${CYAN} to scan all ASNs${NONE}\n"
+  printf "${YELLOW}Navigation:${NONE}\n"
+  if (( current_page > 1 )); then
+    printf "${CYAN}  • Type ${GREEN}'p'${CYAN} for previous page${NONE}\n"
+  fi
+  if (( current_page < total_pages )); then
+    printf "${CYAN}  • Type ${GREEN}'n'${CYAN} for next page${NONE}\n"
+  fi
+  if (( total_pages > 1 )); then
+    printf "${CYAN}  • Type ${GREEN}'l'${CYAN} for last page${NONE}\n"
+    printf "${CYAN}  • Type ${GREEN}'g'${CYAN} followed by page number (e.g., 'g3') to go to specific page${NONE}\n"
+  fi
+  printf "${CYAN}  • Enter ${GREEN}1-${#ALL_ASNS[@]}${CYAN} to select an ASN${NONE}\n"
+  printf "${CYAN}  • Type ${GREEN}'search'${CYAN} to search ASNs by keyword${NONE}\n"
   echo ""
   
   read -p "Your choice: " SELECTION
   
-  # Check if it's a number for popular ASNs
-  if [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#AVAILABLE_POPULAR[@]} )); then
-    # Extract just the ASN ID (e.g., "AS16509" from "AS16509 Amazon.com, Inc.")
-    ASN_INPUT=$(echo "${AVAILABLE_POPULAR[$((SELECTION-1))]}" | awk '{print $1}')
-    log info "${GREEN}Selected: ${AVAILABLE_POPULAR[$((SELECTION-1))]}"
-    break
-  elif [[ "$SELECTION" == "all" ]]; then
-    ASN_INPUT="all"
-    log info "${GREEN}Selected: All ASNs"
+  # Handle navigation
+  if [[ "$SELECTION" == "n" ]] && (( current_page < total_pages )); then
+    current_page=$((current_page + 1))
+  elif [[ "$SELECTION" == "p" ]] && (( current_page > 1 )); then
+    current_page=$((current_page - 1))
+  elif [[ "$SELECTION" == "l" ]] && (( total_pages > 1 )); then
+    current_page=$total_pages
+  elif [[ "$SELECTION" =~ ^g([0-9]+)$ ]]; then
+    target_page="${BASH_REMATCH[1]}"
+    if (( target_page >= 1 && target_page <= total_pages )); then
+      current_page=$target_page
+    else
+      printf "${RED}Invalid page number. Please enter a page between 1 and $total_pages.${NONE}\n"
+      read -p "Press Enter to continue..."
+    fi
+  elif [[ "$SELECTION" =~ ^[0-9]+$ ]] && (( SELECTION > 0 && SELECTION <= ${#ALL_ASNS[@]} )); then
+    # Extract just the ASN ID
+    ASN_INPUT=$(echo "${ALL_ASNS[$((SELECTION-1))]}" | awk '{print $1}')
+    log info "${GREEN}Selected: ${ALL_ASNS[$((SELECTION-1))]}"
     break
   elif [[ "$SELECTION" == "search" ]]; then
     # Enter search mode
@@ -250,46 +297,86 @@ while true; do
         continue
       fi
       
-      echo ""
-      printf "${GREEN}Found ${#SEARCH_RESULTS[@]} ASNs matching '${YELLOW}$SEARCH_TERM${GREEN}':${NONE}\n"
-      COUNTER=1
-      for result in "${SEARCH_RESULTS[@]}"; do
-        printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$COUNTER" "$result"
-        COUNTER=$((COUNTER+1))
-        # Limit display to first 20 results to avoid overwhelming output
-        if (( COUNTER > 20 )); then
-          printf "${GRAY}  ... and $((${#SEARCH_RESULTS[@]} - 20)) more results${NONE}\n"
-          break
+      # Pagination for search results
+      search_page_size=20
+      search_current_page=1
+      search_total_pages=$(( (${#SEARCH_RESULTS[@]} + search_page_size - 1) / search_page_size ))
+      
+      while true; do
+        echo ""
+        printf "${GREEN}Found ${#SEARCH_RESULTS[@]} ASNs matching '${YELLOW}$SEARCH_TERM${GREEN}' (Page ${YELLOW}$search_current_page${GREEN}/${YELLOW}$search_total_pages${GREEN}):${NONE}\n"
+        
+        # Calculate start and end indices for current page
+        search_start_idx=$(( (search_current_page - 1) * search_page_size ))
+        search_end_idx=$(( search_start_idx + search_page_size - 1 ))
+        if (( search_end_idx >= ${#SEARCH_RESULTS[@]} )); then
+          search_end_idx=$(( ${#SEARCH_RESULTS[@]} - 1 ))
+        fi
+        
+        # Display current page results
+        for i in $(seq $search_start_idx $search_end_idx); do
+          search_display_num=$(( i + 1 ))
+          printf "${CYAN}  %d) ${GREEN}%s${NONE}\n" "$search_display_num" "${SEARCH_RESULTS[$i]}"
+        done
+        
+        # Show navigation options
+        echo ""
+        printf "${YELLOW}Navigation:${NONE}\n"
+        if (( search_current_page > 1 )); then
+          printf "${CYAN}  • Type ${GREEN}'p'${CYAN} for previous page${NONE}\n"
+        fi
+        if (( search_current_page < search_total_pages )); then
+          printf "${CYAN}  • Type ${GREEN}'n'${CYAN} for next page${NONE}\n"
+        fi
+        if (( search_total_pages > 1 )); then
+          printf "${CYAN}  • Type ${GREEN}'l'${CYAN} for last page${NONE}\n"
+          printf "${CYAN}  • Type ${GREEN}'g'${CYAN} followed by page number (e.g., 'g3') to go to specific page${NONE}\n"
+        fi
+        printf "${CYAN}  • Enter ${GREEN}1-${#SEARCH_RESULTS[@]}${CYAN} to select an ASN${NONE}\n"
+        printf "${CYAN}  • Type ${GREEN}'refine'${CYAN} to search again${NONE}\n"
+        printf "${CYAN}  • Type ${GREEN}'back'${CYAN} to return to main menu${NONE}\n"
+        
+        read -p "Your choice: " SEARCH_SELECTION
+        
+        if [[ "$SEARCH_SELECTION" == "back" ]]; then
+          break  # Go back to main menu
+        elif [[ "$SEARCH_SELECTION" == "refine" ]]; then
+          break  # Search again
+        elif [[ "$SEARCH_SELECTION" == "n" ]] && (( search_current_page < search_total_pages )); then
+          search_current_page=$((search_current_page + 1))
+        elif [[ "$SEARCH_SELECTION" == "p" ]] && (( search_current_page > 1 )); then
+          search_current_page=$((search_current_page - 1))
+        elif [[ "$SEARCH_SELECTION" == "l" ]] && (( search_total_pages > 1 )); then
+          search_current_page=$search_total_pages
+        elif [[ "$SEARCH_SELECTION" =~ ^g([0-9]+)$ ]]; then
+          search_target_page="${BASH_REMATCH[1]}"
+          if (( search_target_page >= 1 && search_target_page <= search_total_pages )); then
+            search_current_page=$search_target_page
+          else
+            printf "${RED}Invalid page number. Please enter a page between 1 and $search_total_pages.${NONE}\n"
+            read -p "Press Enter to continue..."
+          fi
+        elif [[ "$SEARCH_SELECTION" =~ ^[0-9]+$ ]] && (( SEARCH_SELECTION > 0 && SEARCH_SELECTION <= ${#SEARCH_RESULTS[@]} )); then
+          # Extract just the ASN ID
+          ASN_INPUT=$(echo "${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}" | awk '{print $1}')
+          log info "${GREEN}Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
+          break 2  # Break out of both search loop and main loop
+        else
+          log warn "Invalid selection. Please try again."
         fi
       done
-      
-      read -p "Enter number to select, 'refine' to search again, or 'back': " SEARCH_SELECTION
-      
-      if [[ "$SEARCH_SELECTION" == "back" ]]; then
-        break  # Go back to main menu
-      elif [[ "$SEARCH_SELECTION" == "refine" ]]; then
-        continue  # Search again
-      elif [[ "$SEARCH_SELECTION" =~ ^[0-9]+$ ]] && (( SEARCH_SELECTION > 0 && SEARCH_SELECTION <= ${#SEARCH_RESULTS[@]} && SEARCH_SELECTION <= 20 )); then
-        # Extract just the ASN ID
-        ASN_INPUT=$(echo "${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}" | awk '{print $1}')
-        log info "${GREEN}Selected: ${SEARCH_RESULTS[$((SEARCH_SELECTION-1))]}"
-        break 2  # Break out of both search loop and main loop
-      else
-        log warn "Invalid selection. Please enter a valid number, 'refine', or 'back'."
-      fi
     done
+    # Check if ASN was selected during search
+    if [[ -n "$ASN_INPUT" ]]; then
+      break  # Exit main loop
+    fi
   else
     log warn "Invalid selection. Please try again."
   fi
 done
 
-if [[ "$ASN_INPUT" == "all" ]]; then
-  OUTFILE="$OUTPUT_DIR/frontable-all_ASNs-$(date +%F).txt"
-  LOGFILE="$OUTPUT_DIR/frontable-all_ASNs-$(date +%F).log"
-else
-  OUTFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).txt"
-  LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
-fi
+OUTFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).txt"
+LOGFILE="$OUTPUT_DIR/frontable-$ASN_INPUT-$(date +%F).log"
 # PATH variable removed; install.sh handles it
 
 # Now that LOGFILE is set, redirect all output to log file
@@ -308,13 +395,8 @@ exec > >(tee -a "$LOGFILE") 2>&1
 # Removed: All dependency checks will be handled by install.sh
 
 ######################## 6 · fetch routed prefixes ############################
-if [[ "$ASN_INPUT" == "all" ]]; then
-  log info "${CYAN}📡 Fetching prefixes for ${GREEN}all ASNs${CYAN}..."
-  python3 ~/frontable-scanner/py/checker.py --cidrs > "$CIDRS"
-else
-  log info "${CYAN}📡 Fetching prefixes for ${GREEN}$ASN_INPUT${CYAN}..."
-  python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
-fi
+log info "${CYAN}📡 Fetching prefixes for ${GREEN}$ASN_INPUT${CYAN}..."
+python3 ~/frontable-scanner/py/checker.py "$ASN_INPUT" > "$CIDRS"
 
 log info "${GREEN}Found ${YELLOW}$(wc -l <"$CIDRS")${GREEN} CIDR ranges"
 
