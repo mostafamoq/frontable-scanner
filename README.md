@@ -1,6 +1,25 @@
 # 🎯 Domain Fronting IP Scanner
 
 > **Find special IPs for domain fronting to bypass internet restrictions and enhance privacy.**
+> **Now supports custom ports and XHTTP protocol!** 🚀
+
+---
+
+## 🆕 **What's New in Latest Version**
+
+### **🔌 Multi-Protocol Support**
+- ✅ **WebSocket (WS)** - Traditional WebSocket connections
+- ✅ **XHTTP** - HTTP/2 multiplexing protocol (NEW!)
+
+### **🎯 Smart Port Detection**
+- ✅ **Auto-extracts ports** from your decoy URL
+- ✅ **Custom ports supported**: 2096, 8443, 9999, or any port
+- ✅ **Default fallbacks**: HTTPS (443), HTTP (80)
+
+### **🧠 Intelligent Testing**
+- ✅ **Protocol-specific validation**
+- ✅ **Accepts all valid HTTP codes** (200, 400, 404, 500, etc.)
+- ✅ **Enhanced detection accuracy**
 
 ---
 
@@ -50,11 +69,29 @@ After installation, simply run:
 frontable
 ```
 
-The tool will interactively ask you:
+The tool will interactively guide you through:
 
-1. **🎭 Decoy URL**: Your target ws xray vless protocol address (e.g., `https://example.com/ws-set-path`)
-2. **🏢 Provider Name**: For organizing results (e.g., "MCI", "MKH", ...)  
-3. **🌐 ASN Selection**: Choose from popular providers or search all networks
+### **1. 🎭 Enter Your Decoy URL**
+Examples of supported formats:
+```
+https://example.com/ws                    → Port 443 (HTTPS default)
+https://example.com:2096/xxx              → Port 2096 (custom)
+https://example.com:8443/ws?xxx           → Port 8443 (custom)
+http://example.com:8080/api               → Port 8080 (custom)
+```
+
+### **2. 🔌 Choose Protocol Type**
+```
+🔌 Select the target protocol:
+  1) WebSocket (WS) - Traditional WebSocket connections
+  2) XHTTP - HTTP/2 multiplexing protocol
+```
+
+### **3. 🏢 Provider Name**
+For organizing results (e.g., "MCI", "MKH", "Cloudflare")
+
+### **4. 🌐 ASN Selection**
+Choose from popular providers or search all networks
 
 ### **Popular ASNs Available:**
 - 🔥 **AS13335** Cloudflare, Inc.
@@ -66,32 +103,34 @@ The tool will interactively ask you:
 
 ---
 
-## 📊 **Results**
+## 📊 **Enhanced Results**
 
 Your scan results are saved in `~/output/[Provider]/`:
 
 - **`frontable-*.txt`** → ✅ Working IPs for domain fronting
-- **`frontable-*.log`** → 📜 Detailed scan logs
+- **`frontable-*.log`** → 📜 Detailed scan logs with protocol info
 
-### **Understanding the Output:**
-- `✔︎ 1.2.3.4` → ✅ **Perfect!** This IP supports domain fronting
-- `✘ 1.2.3.4 (TLS handshake failed)` → ❌ No secure connection
-- `✘ 1.2.3.4 (TLS OK, but curl test failed)` → ⚠️ TLS works but domain fronting failed
+### **Understanding the New Output:**
+```bash
+✔︎ 1.2.3.4 (WebSocket fronting works)           → ✅ Perfect WS support!
+✔︎ 5.6.7.8 (XHTTP fronting works, HTTP 404)    → ✅ Perfect XHTTP support!
+✘ 9.8.7.6 (TLS OK, but XHTTP connection failed) → ❌ Protocol incompatible
+✘ 1.1.1.1 (TLS handshake failed)                → ❌ No secure connection
+```
 
 ---
 
 ## 🛠️ **Using Results with Xray**
 
-Example configuration snippet:
-
+### **WebSocket Configuration:**
 ```json
 {
   "outbounds": [{
     "protocol": "vless",
     "settings": {
       "vnext": [{
-        "address": "YOUR_FRONTABLE_IP",  // ← Use IP from results
-        "port": 443,
+        "address": "YOUR_FRONTABLE_IP",  // ← Use IP from WS results
+        "port": 443,  // ← Or your custom port
         "users": [{"encryption": "none", "id": "YOUR_UUID"}]
       }]
     },
@@ -99,11 +138,40 @@ Example configuration snippet:
       "network": "ws",
       "security": "tls", 
       "tlsSettings": {
-        "serverName": "YOUR_DECOY_DOMAIN"  // ← Your decoy hostname
+        "serverName": "YOUR_DECOY_DOMAIN"
       },
       "wsSettings": {
         "host": "YOUR_DECOY_DOMAIN",
-        "path": "YOUR_DECOY_PATH"          // ← Your decoy path
+        "path": "YOUR_DECOY_PATH"
+      }
+    }
+  }]
+}
+```
+
+### **XHTTP Configuration:**
+```json
+{
+  "outbounds": [{
+    "protocol": "vless",
+    "settings": {
+      "vnext": [{
+        "address": "YOUR_FRONTABLE_IP",  // ← Use IP from XHTTP results
+        "port": 2096,  // ← Your custom port (e.g., 2096, 8443)
+        "users": [{"encryption": "none", "id": "YOUR_UUID"}]
+      }]
+    },
+    "streamSettings": {
+      "network": "xhttp",
+      "security": "tls",
+      "tlsSettings": {
+        "serverName": "YOUR_DECOY_DOMAIN",
+        "alpn": ["h2", "http/1.1"]
+      },
+      "xhttpSettings": {
+        "host": "YOUR_DECOY_DOMAIN",
+        "path": "YOUR_DECOY_PATH",
+        "mode": "auto"
       }
     }
   }]
@@ -112,17 +180,39 @@ Example configuration snippet:
 
 ---
 
-## ⚡ **Features**
+## ⚡ **Enhanced Features**
 
 | Feature | Description |
 |---------|-------------|
-| **🎯 Smart Scanning** | Tests both TLS handshake and domain fronting capability |
+| **🔌 Multi-Protocol** | WebSocket + XHTTP support with intelligent detection |
+| **🎯 Smart Port Detection** | Auto-extracts ports from URLs (443, 2096, 8443, etc.) |
+| **🧠 Protocol-Specific Testing** | Tailored validation for each protocol type |
+| **🎨 Enhanced Logging** | Protocol and port info in colored output |
 | **🔥 Popular ASNs** | Quick access to Cloudflare, Amazon, Google, Microsoft |
-| **�� Keyword Search** | Find specific providers among 2500+ networks |
+| **🔍 Keyword Search** | Find specific providers among 2500+ networks |
 | **⚡ Parallel Processing** | 20+ concurrent jobs even on low-spec VPS |
-| **🎨 Beautiful Logs** | Color-coded output with detailed debugging |
 | **📁 Organized Results** | Clean folder structure with timestamps |
 | **🖥️ Cross-Platform** | Works on macOS and Linux |
+
+---
+
+## 🎯 **Protocol-Specific Examples**
+
+### **VLESS WebSocket:**
+```
+Input URL: https://cdn.example.com/wsxxx
+→ Protocol: WebSocket
+→ Port: 443 (default HTTPS)
+→ Tests for: HTTP 400 "Bad Request" response
+```
+
+### **VLESS XHTTP:**
+```
+Input URL: https://cdn.example.com:2096/xxxx
+→ Protocol: XHTTP  
+→ Port: 2096 (custom)
+→ Tests for: Any valid HTTP response (200, 404, 403, etc.)
+```
 
 ---
 
@@ -132,8 +222,9 @@ Example configuration snippet:
 |-------|----------|
 | **Permission error with masscan** | Enter your password when prompted (needs `sudo`) |
 | **Missing dependencies** | Re-run installer: `bash <(curl -Ls https://raw.githubusercontent.com/mostafamoq/frontable-scanner/main/install.sh)` |
-| **No results found** | Try different ASNs or verify your decoy URL is correct |
+| **No results found** | Try different ASNs or verify your decoy URL/protocol is correct |
 | **Command not found: frontable** | Open new terminal or run: `hash -r` |
+| **XHTTP not working** | Ensure your server supports HTTP/2 and the correct path |
 
 ---
 
@@ -141,13 +232,20 @@ Example configuration snippet:
 
 Domain fronting is a technique that makes your internet traffic appear as if it's going to a popular, legitimate website (like Google or Cloudflare) while actually connecting to your intended destination. This helps bypass censorship and enhance privacy.
 
-**This tool finds IP addresses that support this technique with your chosen decoy domain.**
+**This tool finds IP addresses that support this technique with your chosen decoy domain and protocol.**
+
+### **Why Multi-Protocol Support Matters:**
+- **WebSocket**: Widely supported, stable connections
+- **XHTTP**: Modern HTTP/2 multiplexing, better performance
+- **Custom Ports**: Bypass port-based filtering (2096, 8443, etc.)
 
 ---
 
 <div align="center">
 
 **🌟 Star this repo if it helped you bypass restrictions! 🌟**
+
+**New: XHTTP + Multi-Port Support!** 🚀
 
 [Report Issues](../../issues) • [Contribute](../../pulls) • [Discussions](../../discussions)
 

@@ -101,11 +101,32 @@ if [[ "$GITHUB_RAW_BASE_URL" == "YOUR_GITHUB_REPO_RAW_URL" ]]; then
   exit 1
 fi
 
-curl -Ls "$GITHUB_RAW_BASE_URL/find_frontable.sh" -o "$INSTALL_DIR/find_frontable.sh"
-curl -Ls "$GITHUB_RAW_BASE_URL/find_frontable_linux.sh" -o "$INSTALL_DIR/find_frontable_linux.sh"
-curl -Ls "$GITHUB_RAW_BASE_URL/py/checker.py" -o "$INSTALL_DIR/py/checker.py"
-curl -Ls "$GITHUB_RAW_BASE_URL/py/ASNs.json" -o "$INSTALL_DIR/py/ASNs.json"
-log "✔︎ Files downloaded."
+# Downloads with progress bars
+declare -A downloads=(
+  ["find_frontable.sh"]="Main scanner script (macOS)"
+  ["find_frontable_linux.sh"]="Main scanner script (Linux)"
+  ["py/checker.py"]="ASN checker utility"
+  ["py/ASNs.json"]="ASN database"
+)
+
+download_count=1
+total_downloads=${#downloads[@]}
+
+for file in "${!downloads[@]}"; do
+  description="${downloads[$file]}"
+  log "[$download_count/$total_downloads] Downloading $description..."
+  
+  if curl -L --progress-bar "$GITHUB_RAW_BASE_URL/$file" -o "$INSTALL_DIR/$file"; then
+    log "✔︎ $description downloaded successfully"
+  else
+    log "ERROR: Failed to download $file"
+    exit 1
+  fi
+  
+  download_count=$((download_count + 1))
+done
+
+log "✔︎ All files downloaded successfully."
 
 # 4. Make Scripts Executable
 log "Making scripts executable…"

@@ -84,10 +84,56 @@ while true; do
   fi
 done
 
+# Interactive protocol selection
+PROTOCOL_TYPE=""
+while true; do
+  echo ""
+  printf "${GREEN}🔌 Select the target protocol:${NONE}\n"
+  printf "${CYAN}  1) ${GREEN}WebSocket (WS)${CYAN} - Traditional WebSocket connections${NONE}\n"
+  printf "${CYAN}  2) ${GREEN}XHTTP${CYAN} - HTTP/2 multiplexing protocol${NONE}\n"
+  echo ""
+  
+  read -p "Your choice (1-2): " PROTOCOL_CHOICE
+  
+  case "$PROTOCOL_CHOICE" in
+    1)
+      PROTOCOL_TYPE="ws"
+      log info "${GREEN}Selected: WebSocket (WS) protocol"
+      break
+      ;;
+    2)
+      PROTOCOL_TYPE="xhttp"
+      log info "${GREEN}Selected: XHTTP protocol"
+      break
+      ;;
+    *)
+      log warn "Invalid selection. Please enter 1 or 2."
+      ;;
+  esac
+done
+
 # Extract hostname and path from the full URL
 DECOY_HOST=$(echo "$DECOY_FULL_URL" | sed -E 's|^https?://([^/]+).*|\1|')
 DECOY_PATH=$(echo "$DECOY_FULL_URL" | sed -E 's|^https?://[^/]+(/.*)|\1|')
 DECOY_PATH=${DECOY_PATH:-/} # Default to / if path is empty
+
+# Extract port from URL or use default
+if [[ "$DECOY_FULL_URL" =~ ^https://[^:/]+:([0-9]+) ]]; then
+  DECOY_PORT="${BASH_REMATCH[1]}"
+elif [[ "$DECOY_FULL_URL" =~ ^http://[^:/]+:([0-9]+) ]]; then
+  DECOY_PORT="${BASH_REMATCH[1]}"
+elif [[ "$DECOY_FULL_URL" =~ ^https:// ]]; then
+  DECOY_PORT="443"  # Default HTTPS port
+elif [[ "$DECOY_FULL_URL" =~ ^http:// ]]; then
+  DECOY_PORT="80"   # Default HTTP port
+else
+  DECOY_PORT="443"  # Fallback default
+fi
+
+# Remove port from hostname if it was included
+DECOY_HOST=$(echo "$DECOY_HOST" | sed -E 's|:[0-9]+$||')
+
+log info "🎯 Target: ${GREEN}$DECOY_HOST:$DECOY_PORT${NONE} → ${YELLOW}$DECOY_PATH${NONE}"
 
 # Interactive input for Internet Provider Name
 INTERNET_PROVIDER=""
@@ -295,27 +341,62 @@ fi
 
 log info "${GREEN}Found ${YELLOW}$(wc -l <"$CIDRS")${GREEN} CIDR ranges"
 
-######################## 7 · masscan port 443 #################################
-log info "${CYAN}🚀 Scanning ports ${GRAY}(rate: ${YELLOW}${RATE}pps${GRAY})${CYAN}..."
+######################## 7 · masscan port scan ###################################
+log info "${CYAN}🚀 Scanning port ${GREEN}$DECOY_PORT${CYAN} ${GRAY}(rate: ${YELLOW}${RATE}pps${GRAY})${CYAN}..."
 sudo -p "masscan needs root → " \
-     masscan -iL "$CIDRS" -p443 --rate "$RATE" --banners -oL "$SCAN"
+     masscan -iL "$CIDRS" -p"$DECOY_PORT" --rate "$RATE" --banners -oL "$SCAN"
 
 grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' "$SCAN" | sort -u > "$SCAN.ips"
-log info "${GREEN}Found ${YELLOW}$(wc -l <"$SCAN.ips")${GREEN} hosts with port 443 open"
+log info "${GREEN}Found ${YELLOW}$(wc -l <"$SCAN.ips")${GREEN} hosts with port ${YELLOW}$DECOY_PORT${GREEN} open"
 
 ######################## 8 · parallel TLS probe ###############################
-log info "${CYAN}🔍 Testing IPs for domain fronting ${GRAY}(${YELLOW}${PARALLEL_JOBS}${GRAY} parallel jobs)${CYAN}..."
+log info "${CYAN}🔍 Testing IPs for ${GREEN}$PROTOCOL_TYPE${CYAN} domain fronting ${GRAY}(${YELLOW}${PARALLEL_JOBS}${GRAY} parallel jobs)${CYAN}..."
 : > "$OUTFILE"
 
 probe_one() {                           # $1 = IP address
   local ip=$1
-  if timeout 4 openssl s_client -connect "$ip:443" -servername "$DECOY_HOST" \
+  
+  # First check TLS handshake
+  if timeout 4 openssl s_client -connect "$ip:$DECOY_PORT" -servername "$DECOY_HOST" \
          < /dev/null 2>/dev/null | grep -q "Server certificate"; then
-    if timeout 4 curl --resolve "$DECOY_HOST:443:$ip" "$DECOY_FULL_URL" 2>/dev/null | grep -q "Bad Request"; then
-      echo "$ip" >> "$OUTFILE"
-      log info "${GREEN}✔︎ $ip"
-    else
-      log info "${RED}✘ $ip ${GRAY}(TLS OK, but curl test failed)"
+    
+    # Protocol-specific testing
+    if [[ "$PROTOCOL_TYPE" == "ws" ]]; then
+      # WebSocket test - expect "Bad Request" for non-WebSocket HTTP requests
+      if timeout 4 curl --resolve "$DECOY_HOST:$DECOY_PORT:$ip" "$DECOY_FULL_URL" 2>/dev/null | grep -q "Bad Request"; then
+        echo "$ip" >> "$OUTFILE"
+        log info "${GREEN}✔︎ $ip ${GRAY}(WebSocket fronting works)"
+      else
+        log info "${RED}✘ $ip ${GRAY}(TLS OK, but WebSocket test failed)"
+      fi
+    elif [[ "$PROTOCOL_TYPE" == "xhttp" ]]; then
+      # XHTTP test - more comprehensive detection
+      local curl_output=$(timeout 6 curl -s -w "HTTPCODE:%{http_code}|TIME:%{time_total}|SIZE:%{size_download}" \
+                         --http2 --resolve "$DECOY_HOST:$DECOY_PORT:$ip" \
+                         -H "Host: $DECOY_HOST" \
+                         -H "User-Agent: Chrome/120.0.0.0" \
+                         -H "Accept: */*" \
+                         -H "Accept-Encoding: gzip, deflate, br" \
+                         "$DECOY_FULL_URL" 2>&1 || echo "ERROR")
+      
+      # Extract HTTP code from output
+      local http_code="000"
+      if [[ "$curl_output" =~ HTTPCODE:([0-9]+) ]]; then
+        http_code="${BASH_REMATCH[1]}"
+      fi
+      
+      # For XHTTP, any valid HTTP response code indicates working fronting
+      # Valid codes: 200, 400, 401, 403, 404, 405, 500, etc.
+      # These all prove the server is reachable and responding through the fronting path
+      
+      if [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
+        # Got a valid HTTP response code (1xx, 2xx, 3xx, 4xx, 5xx)
+        echo "$ip" >> "$OUTFILE"
+        log info "${GREEN}✔︎ $ip ${GRAY}(XHTTP fronting works, HTTP $http_code)"
+      else
+        # Connection failed - no valid HTTP response
+        log info "${RED}✘ $ip ${GRAY}(TLS OK, but XHTTP connection failed - code: $http_code)"
+      fi
     fi
   else
     log info "${RED}✘ $ip ${GRAY}(TLS handshake failed)"
@@ -323,7 +404,7 @@ probe_one() {                           # $1 = IP address
 }
 
 export -f probe_one log level_val                      # functions only
-export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH OUTFILE NONE RED GREEN YELLOW CYAN GRAY  # Export new variables
+export LOGLEVEL DECOY_FULL_URL DECOY_HOST DECOY_PATH DECOY_PORT OUTFILE NONE RED GREEN YELLOW CYAN GRAY PROTOCOL_TYPE  # Export new variables
 
 # Use PARALLEL_JOBS instead of CORES for better performance on network I/O
 xargs -n1 -P "$PARALLEL_JOBS" -I{} bash -c 'probe_one "$@"' _ {} < "$SCAN.ips"
